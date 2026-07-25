@@ -56,6 +56,88 @@ def test_schema_marks_optional_inputs(sample_schema):
     assert lora.inputs["model"].required is True
 
 
+def test_schema_reads_inline_combo_choices():
+    """The classic spelling: the choices are the declared type."""
+    spec = schema.normalize({
+        "Node": {
+            "input": {"required": {"sampler_name": [["euler", "heun"], {"default": "euler"}]}},
+            "output": [],
+        }
+    })
+    slot = spec.get("Node").inputs["sampler_name"]
+    assert slot.type_name == "COMBO"
+    assert slot.is_enum and slot.is_combo
+    assert slot.choices == ["euler", "heun"]
+
+
+def test_schema_reads_combo_options_dict():
+    """The newer spelling: ["COMBO", {"options": [...]}]."""
+    spec = schema.normalize({
+        "Node": {
+            "input": {
+                "required": {
+                    "sampler_name": ["COMBO", {"options": ["euler", "heun"], "default": "euler"}]
+                }
+            },
+            "output": [],
+        }
+    })
+    slot = spec.get("Node").inputs["sampler_name"]
+    assert slot.type_name == "COMBO"
+    assert slot.is_enum and slot.is_combo
+    assert slot.choices == ["euler", "heun"]
+
+
+def test_combo_options_dict_still_catches_bad_enum_values():
+    """The headline rule must keep working under the new COMBO spelling."""
+    spec = schema.normalize({
+        "KSampler": {
+            "input": {
+                "required": {"sampler_name": ["COMBO", {"options": ["euler", "heun"]}]}
+            },
+            "output": ["LATENT"],
+        }
+    })
+    nodes = {"1": {"class_type": "KSampler", "inputs": {"sampler_name": "dpmpp_3m_sde"}}}
+    diagnostics = linter.lint_workflow(nodes, spec)
+    assert rule_ids(diagnostics) == ["invalid-enum"]
+    assert "'euler'" in diagnostics[0].message
+    good = {"1": {"class_type": "KSampler", "inputs": {"sampler_name": "euler"}}}
+    assert linter.lint_workflow(good, spec) == []
+
+
+def test_combo_without_options_is_never_type_checked():
+    """A COMBO whose choices ComfyUI computes at runtime must not false-positive."""
+    spec = schema.normalize({
+        "Source": {"input": {"required": {}}, "output": ["STRING"]},
+        "Node": {
+            "input": {"required": {"pick": ["COMBO", {"tooltip": "filled in at runtime"}]}},
+            "output": [],
+        },
+    })
+    slot = spec.get("Node").inputs["pick"]
+    assert slot.is_combo and not slot.is_enum
+    # A literal value cannot be judged...
+    assert linter.lint_workflow(
+        {"1": {"class_type": "Node", "inputs": {"pick": "anything at all"}}}, spec
+    ) == []
+    # ...and neither can a link into the slot (no type-mismatch false positive).
+    linked = {
+        "1": {"class_type": "Source", "inputs": {}},
+        "2": {"class_type": "Node", "inputs": {"pick": ["1", 0]}},
+    }
+    assert linter.lint_workflow(linked, spec) == []
+
+
+def test_bare_combo_string_without_options_element():
+    """Some custom nodes write just ["COMBO"] with no options at all."""
+    spec = schema.normalize({
+        "Node": {"input": {"required": {"pick": ["COMBO"]}}, "output": []}
+    })
+    slot = spec.get("Node").inputs["pick"]
+    assert slot.is_combo and not slot.is_enum
+
+
 def test_schema_rejects_empty_document():
     with pytest.raises(schema.SchemaError):
         schema.normalize({})
@@ -256,6 +338,17 @@ def test_anchor_formatting():
     assert diag.anchor() == "5:sampler_name"
 
 
+def test_diagnostics_are_hashable_and_deduplicate():
+    args = (rules.ERROR, "invalid-enum", "5", "KSampler", "sampler_name", "boom")
+    first, second = rules.Diagnostic(*args), rules.Diagnostic(*args)
+    other = rules.Diagnostic(
+        rules.ERROR, "invalid-enum", "6", "KSampler", "sampler_name", "boom"
+    )
+    assert first == second
+    assert hash(first) == hash(second)
+    assert len({first, second, other}) == 2
+
+
 def test_ui_format_workflow_is_rejected(tmp_path):
     path = tmp_path / "ui.json"
     path.write_text(json.dumps({"nodes": [], "links": []}), encoding="utf-8")
@@ -337,6 +430,58 @@ def test_cli_multiple_files():
     ])
     assert code == cli.EXIT_ERRORS
     assert "in 2 files" in out
+
+
+def test_cli_reports_the_same_path_in_text_and_json(tmp_path, monkeypatch):
+    monkeypatch.chdir(tmp_path)
+    nested = tmp_path / "workflows"
+    nested.mkdir()
+    path = nested / "bad.json"
+    path.write_text(
+        json.dumps({"7": {"class_type": "SuperSaveImage", "inputs": {}}}),
+        encoding="utf-8",
+    )
+    expected = os.path.join("workflows", "bad.json")
+    code, text_out, _ = run_cli(["--schema-cache", OBJECT_INFO, str(path)])
+    assert code == cli.EXIT_ERRORS
+    assert text_out.startswith(expected + ":7:class_type")
+    code, json_out, _ = run_cli(["--schema-cache", OBJECT_INFO, "--json", str(path)])
+    assert json.loads(json_out)["files"][0]["path"] == expected
+
+
+def test_cli_keeps_linting_after_an_unreadable_file(tmp_path):
+    broken = tmp_path / "not_json.json"
+    broken.write_text("{ this is not json", encoding="utf-8")
+    code, out, err = run_cli([
+        "--schema-cache", OBJECT_INFO,
+        str(broken),
+        fixture("broken_unknown_node.json"),
+        fixture("valid_workflow.json"),
+    ])
+    # The bad file is reported once...
+    assert "not valid JSON" in err
+    # ...and the two readable files were still linted.
+    assert "unknown-node" in out
+    assert "in 2 files" in out
+    assert "1 file skipped (unreadable)" in out
+    # An unchecked file outranks lint errors: usage exit code.
+    assert code == cli.EXIT_USAGE
+
+
+def test_cli_json_lists_unreadable_files(tmp_path):
+    broken = tmp_path / "not_json.json"
+    broken.write_text("{ this is not json", encoding="utf-8")
+    code, out, _ = run_cli([
+        "--schema-cache", OBJECT_INFO, "--json",
+        str(broken),
+        fixture("valid_workflow.json"),
+    ])
+    assert code == cli.EXIT_USAGE
+    payload = json.loads(out)
+    assert payload["summary"]["files"] == 1
+    assert payload["summary"]["unreadable"] == 1
+    assert len(payload["unreadable"]) == 1
+    assert "not valid JSON" in payload["unreadable"][0]["error"]
 
 
 def test_cli_missing_workflow_argument_exits_two():

@@ -1,11 +1,12 @@
 [build-system]
-requires = ["setuptools>=61.0"]
+requires = ["setuptools>=64.0"]
 build-backend = "setuptools.build_meta"
 
 [project]
 name = "comfy-lint"
-version = "0.1.0"
-description = "Static linter for ComfyUI API-format workflow JSON - catch broken workflows before they reach the GPU."
+# Single source of truth: comfy_lint.__version__ (see [tool.setuptools.dynamic]).
+dynamic = ["version"]
+description ="Static linter for ComfyUI API-format workflow JSON - catch broken workflows before they reach the GPU."
 readme = "README.md"
 requires-python = ">=3.9"
 license = { text = "MIT" }
@@ -31,15 +32,18 @@ dependencies = []
 dev = ["pytest>=7.0"]
 
 [project.urls]
-Homepage = "https://github.com/TangyiStudio/comfy-lint"
-Source = "https://github.com/TangyiStudio/comfy-lint"
-Issues = "https://github.com/TangyiStudio/comfy-lint/issues"
+Homepage = "https://github.com/tangyistudio/comfy-lint"
+Source = "https://github.com/tangyistudio/comfy-lint"
+Issues = "https://github.com/tangyistudio/comfy-lint/issues"
 
 [project.scripts]
 comfy-lint = "comfy_lint.cli:main"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
+
+[tool.setuptools.dynamic]
+version = { attr = "comfy_lint.__version__" }
 
 [tool.setuptools.packages.find]
 where = ["src"]

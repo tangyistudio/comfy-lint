@@ -19,6 +19,9 @@ _COMPATIBLE_TYPES = {
 
 WILDCARD = "*"
 
+#: Normalized type name of a combo/enum widget; never link-type-checked.
+COMBO = "COMBO"
+
 
 class Diagnostic(object):
     """One finding, in a shape that both humans and CI can consume."""
@@ -65,10 +68,25 @@ class Diagnostic(object):
             self.field,
         )
 
+    def _key(self):
+        return (
+            self.severity,
+            self.rule,
+            self.node_id,
+            self.class_type,
+            self.field,
+            self.message,
+        )
+
     def __eq__(self, other):
         if not isinstance(other, Diagnostic):
             return NotImplemented
-        return self.to_dict() == other.to_dict()
+        return self._key() == other._key()
+
+    def __hash__(self):
+        # Diagnostics are immutable in practice, so hashing by value lets
+        # callers de-duplicate them with a set.
+        return hash(self._key())
 
 
 class Context(object):
@@ -269,7 +287,9 @@ def rule_type_mismatch(node_id, node, ctx):
         if not is_link(value):
             continue
         slot = spec.inputs.get(name)
-        if slot is None or slot.is_enum:
+        if slot is None or slot.type_name == COMBO:
+            # A combo slot has no link type of its own to compare against --
+            # true whether ComfyUI spelled its choices out or not.
             continue
         target_id, slot_index = str(value[0]), value[1]
         upstream = ctx.node_schema(target_id)

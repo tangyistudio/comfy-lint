@@ -17,6 +17,9 @@ DEFAULT_TIMEOUT = 15.0
 #: Input type name that accepts a link of any type.
 WILDCARD = "*"
 
+#: Normalized type name for enum ("combo") widgets.
+COMBO = "COMBO"
+
 
 class SchemaError(Exception):
     """Raised when a schema cannot be fetched, read or parsed."""
@@ -28,7 +31,9 @@ class InputSpec(object):
     Attributes:
         name: the input name as used in a workflow's ``inputs`` mapping.
         type_name: ``"MODEL"``, ``"INT"``, ... or ``"COMBO"`` for enums.
-        choices: the allowed values when the slot is an enum, else ``None``.
+        choices: the allowed values when they are known, else ``None``. A
+            ``COMBO`` slot whose choices ComfyUI did not spell out keeps
+            ``None`` here, so it is a combo but not a checkable enum.
         required: whether ComfyUI declares the slot as required.
     """
 
@@ -42,7 +47,13 @@ class InputSpec(object):
 
     @property
     def is_enum(self):
+        """True when the slot has a known, checkable list of choices."""
         return self.choices is not None
+
+    @property
+    def is_combo(self):
+        """True for any combo widget, whether or not its choices are known."""
+        return self.type_name == COMBO
 
     def __repr__(self):  # pragma: no cover - debugging aid
         return "InputSpec(%r, %r, required=%r)" % (
@@ -117,21 +128,50 @@ def _fold(text):
 def _parse_input_spec(name, raw, required):
     """Normalize one entry of ``input.required`` / ``input.optional``.
 
-    ComfyUI writes each entry as ``[type, options]`` where ``type`` is either a
-    string (``"MODEL"``) or a list of literal choices (an enum widget). Some
-    custom nodes omit the options element entirely.
+    ComfyUI writes each entry as ``[type, options]``. ``type`` may be:
+
+    * a plain type string -- ``["MODEL", {}]``;
+    * a list of literal choices, the classic enum widget --
+      ``[["euler", "heun"], {"default": "euler"}]``;
+    * the string ``"COMBO"`` with the choices moved into the options dict,
+      the newer ComfyUI spelling -- ``["COMBO", {"options": [...]}]``.
+
+    All three are accepted. Some custom nodes omit the options element
+    entirely, and a ``"COMBO"`` entry may carry no options at all (a node
+    whose choices are computed at runtime); in that case the slot is known to
+    be an enum but its choices are unknown, so no value is rejected.
     """
+    options = None
     if isinstance(raw, list) and raw:
         declared = raw[0]
+        if len(raw) > 1 and isinstance(raw[1], dict):
+            options = raw[1]
     else:
         declared = raw
     if isinstance(declared, list):
-        choices = [c for c in declared]
-        return InputSpec(name, "COMBO", choices, required)
+        return InputSpec(name, COMBO, list(declared), required)
     if isinstance(declared, str):
+        if declared.upper() == COMBO:
+            return InputSpec(name, COMBO, _combo_choices(options), required)
         return InputSpec(name, declared, None, required)
     # Unrecognized shape: accept anything rather than emit false positives.
     return InputSpec(name, WILDCARD, None, required)
+
+
+def _combo_choices(options):
+    """Pull an explicit choice list out of a ``["COMBO", {...}]`` options dict.
+
+    Returns ``None`` when the choices are not spelled out, which makes the
+    slot an enum with unknown values -- checked for nothing rather than
+    checked against an empty list.
+    """
+    if not isinstance(options, dict):
+        return None
+    for key in ("options", "values", "choices"):
+        value = options.get(key)
+        if isinstance(value, list):
+            return list(value)
+    return None
 
 
 def normalize(raw_object_info, source=""):

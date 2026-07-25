@@ -17,9 +17,11 @@ env/
 htmlcov/
 .tox/
 
-# comfy-lint
-object_info.json
-*.object_info.json
+# comfy-lint's own scratch schema dumps, at the root of THIS repo only.
+# This is not advice for your project: if you use comfy-lint, you *should*
+# commit your .comfy/object_info.json so CI can lint offline (see the README).
+/object_info.json
+/*.object_info.json
 
 # Editors / OS
 .vscode/

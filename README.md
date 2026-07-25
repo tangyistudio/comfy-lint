@@ -2,7 +2,7 @@
 
 **You queued a workflow, waited 12 minutes on the GPU, and it failed because a node type didn't exist.**
 
-`comfy-lint` catches that in 200 ms.
+`comfy-lint` catches that in well under a second.
 
 It reads your ComfyUI API-format workflow JSON, compares it against the `/object_info` schema of a real ComfyUI install, and tells you exactly which node and which field is wrong — before anything is queued, before a model is loaded, before a single step is sampled.
 
@@ -14,8 +14,10 @@ It reads your ComfyUI API-format workflow JSON, compares it against the `/object
 
 ## Install
 
+PyPI release pending — install from git for now:
+
 ```bash
-pip install comfy-lint
+pip install git+https://github.com/tangyistudio/comfy-lint
 ```
 
 Or from a checkout:
@@ -33,7 +35,7 @@ comfy-lint my_workflow.json
 That's it. `comfy-lint` reads the schema from `http://127.0.0.1:8188` by default; point it elsewhere with `--server`.
 
 ```bash
-comfy-lint my_workflow.json --server http://192.168.1.20:8188
+comfy-lint my_workflow.json --server http://comfy.lan:8188
 ```
 
 > The file must be **API format** — in ComfyUI, use *Workflow > Export (API)*. If you hand it a saved UI workflow, `comfy-lint` says so instead of producing nonsense.
@@ -53,7 +55,7 @@ broken_workflow.json:7:class_type  error  unknown-node  SuperSaveImage: unknown 
 schema: http://127.0.0.1:8188/object_info
 ```
 
-Anchors are `file:node_id:field`, so the node id maps straight onto the ids in your JSON.
+Anchors are `file:node_id:field`, so the node id maps straight onto the ids in your JSON. The file part is the path relative to your working directory — the same string in `--json` — so an editor or a CI annotation can jump straight to it.
 
 A clean run is quiet:
 
@@ -86,6 +88,8 @@ Print the table any time with `comfy-lint --list-rules`.
 | `2` | Usage error, unreadable workflow, or the schema could not be fetched |
 
 `--strict` promotes every warning to an error, so `extraneous-input` also fails the build.
+
+When several files are given, an unreadable one is reported on stderr and the remaining files are still linted — you get the whole picture in one run. Exit code `2` wins over `1` in that case, since a file that was never checked is the more urgent problem.
 
 ## Offline mode / CI
 
@@ -122,7 +126,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      - run: pip install comfy-lint
+      # PyPI release pending; install from git.
+      - run: pip install git+https://github.com/tangyistudio/comfy-lint
       - run: comfy-lint workflows/*.json --schema-cache .comfy/object_info.json --strict
 ```
 
@@ -137,7 +142,8 @@ repos:
         name: comfy-lint
         entry: comfy-lint --schema-cache .comfy/object_info.json --strict
         language: python
-        additional_dependencies: [comfy-lint]
+        # PyPI release pending; install from git.
+        additional_dependencies: ["comfy-lint @ git+https://github.com/tangyistudio/comfy-lint"]
         files: ^workflows/.*\.json$
 ```
 
@@ -155,7 +161,7 @@ comfy-lint my_workflow.json --schema-cache .comfy/object_info.json --json
   "version": "0.1.0",
   "schema_source": ".comfy/object_info.json",
   "strict": false,
-  "summary": { "files": 1, "errors": 2, "warnings": 0 },
+  "summary": { "files": 1, "errors": 2, "warnings": 0, "unreadable": 0 },
   "files": [
     {
       "path": "my_workflow.json",
@@ -172,9 +178,12 @@ comfy-lint my_workflow.json --schema-cache .comfy/object_info.json --json
         }
       ]
     }
-  ]
+  ],
+  "unreadable": []
 }
 ```
+
+`unreadable` lists any file that could not be read or parsed (`{"path": ..., "error": ...}`) so a `--json` consumer can tell "clean" apart from "never checked".
 
 ## Options
 
@@ -213,4 +222,4 @@ MIT — see [LICENSE](LICENSE).
 
 ---
 
-Built by [Tangyi Studio](https://github.com/TangyiStudio)
+Built by [Tangyi Studio](https://github.com/tangyistudio)
