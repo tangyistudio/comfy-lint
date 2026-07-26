@@ -14,10 +14,8 @@ It reads your ComfyUI API-format workflow JSON, compares it against the `/object
 
 ## Install
 
-PyPI release pending — install from git for now:
-
 ```bash
-pip install git+https://github.com/tangyistudio/comfy-lint
+pip install comfy-lint
 ```
 
 Or from a checkout:
@@ -126,8 +124,7 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.11"
-      # PyPI release pending; install from git.
-      - run: pip install git+https://github.com/tangyistudio/comfy-lint
+      - run: pip install comfy-lint
       - run: comfy-lint workflows/*.json --schema-cache .comfy/object_info.json --strict
 ```
 
@@ -142,8 +139,7 @@ repos:
         name: comfy-lint
         entry: comfy-lint --schema-cache .comfy/object_info.json --strict
         language: python
-        # PyPI release pending; install from git.
-        additional_dependencies: ["comfy-lint @ git+https://github.com/tangyistudio/comfy-lint"]
+        additional_dependencies: ["comfy-lint"]
         files: ^workflows/.*\.json$
 ```
 
